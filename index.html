@@ -3,39 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
     <title>卓移動プッシュオーダーシステム (Table Transfer KDS)</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons -->
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <!--
+        古い iPad (iOS 9〜) でも動くように、外部CDNを使わずに構成しています。
+        - styles.css : Tailwind CSS を事前ビルドしたもの (build/ 参照)
+        - icons.js   : Lucide アイコンを内蔵したもの
+        - app.js     : アプリ本体 + Firebase Realtime Database 同期 (ES5 で記述)
+    -->
+    <link rel="stylesheet" href="styles.css?v=2">
     <style>
         .touch-none { touch-action: none; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: #0f172a; }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 9999px; }
         ::-webkit-scrollbar-thumb:hover { background: #475569; }
-        
+
+        @-webkit-keyframes pulse-red {
+            0%, 100% { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 0 18px rgba(239, 68, 68, 0.4); }
+            50% { border-color: rgba(239, 68, 68, 0.3); box-shadow: 0 0 6px rgba(239, 68, 68, 0.15); }
+        }
         @keyframes pulse-red {
             0%, 100% { border-color: rgba(239, 68, 68, 0.9); box-shadow: 0 0 18px rgba(239, 68, 68, 0.4); }
             50% { border-color: rgba(239, 68, 68, 0.3); box-shadow: 0 0 6px rgba(239, 68, 68, 0.15); }
         }
-        .urgency-danger { animation: pulse-red 1.5s infinite; }
-        
+        .urgency-danger { -webkit-animation: pulse-red 1.5s infinite; animation: pulse-red 1.5s infinite; }
+
         .bg-ticket-grid {
             background-size: 16px 16px;
-            background-image: 
+            background-image:
                 linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
                 linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
         }
+
+        /* ===== 古いSafari (CSS Grid 非対応) でも崩れないレイアウト ===== */
+        .kds-grid { display: -webkit-box; display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; margin: -8px; }
+        .kds-grid > * { width: calc(100% - 16px); margin: 8px; }
+        @media (min-width: 768px)  { .kds-grid > * { width: calc(50% - 16px); } }
+        @media (min-width: 1024px) { .kds-grid > * { width: calc(33.333% - 16px); } }
+        @media (min-width: 1280px) { .kds-grid > * { width: calc(25% - 16px); } }
+
+        .btn-grid { display: -webkit-box; display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; }
+        .btn-grid > * { width: calc(33.333% - 8px); margin: 4px; }
+        @media (min-width: 640px) { .btn-grid > * { width: calc(25% - 8px); } }
+        .btn-grid > .col-span-full { width: 100%; }
+
+        .two-col { display: -webkit-box; display: -webkit-flex; display: flex; }
+        .two-col > * { -webkit-box-flex: 1; -webkit-flex: 1; flex: 1; }
+        .two-col > * + * { margin-left: 12px; }
+
+        /* flex の gap 非対応ブラウザ用 (iOS 14.0 以下)。app.js が html に no-flexgap を付けます */
+        .no-flexgap .flex.gap-1:not(.flex-col) > * + *   { margin-left: 0.25rem; }
+        .no-flexgap .flex.gap-1\.5:not(.flex-col) > * + * { margin-left: 0.375rem; }
+        .no-flexgap .flex.gap-2:not(.flex-col) > * + *   { margin-left: 0.5rem; }
+        .no-flexgap .flex.gap-3:not(.flex-col) > * + *   { margin-left: 0.75rem; }
+        .no-flexgap .flex-col.gap-2 > * + *, .no-flexgap .flex-col.gap-3 > * + * { margin-top: 0.5rem; }
+        @media (min-width: 640px) {
+            .no-flexgap .flex-col.sm\:flex-row.gap-2 > * + *, .no-flexgap .flex-col.sm\:flex-row.gap-3 > * + * { margin-top: 0; margin-left: 0.5rem; }
+        }
+
+        /* 起動エラー表示 */
+        #bootError { display: none; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col h-screen overflow-hidden select-none">
 
     <!-- Header Navigation -->
-    <header class="bg-slate-900 border-b border-slate-800 px-4 py-3 flex-none flex items-center justify-between shadow-lg z-20">
+    <header class="bg-slate-900 border-b border-slate-800 px-4 py-3 flex-none flex flex-wrap items-center justify-between shadow-lg z-20">
         <!-- Brand & Clock -->
         <div class="flex items-center space-x-3">
-            <div class="bg-amber-500 text-slate-950 p-2 rounded-xl font-extrabold flex items-center justify-center shadow-md shadow-amber-500/20">
+            <div class="bg-amber-500 text-slate-950 p-2 rounded-xl font-extrabold flex items-center justify-center shadow-md">
                 <i data-lucide="arrow-right-left" class="w-6 h-6"></i>
             </div>
             <div>
@@ -59,56 +97,55 @@
             <button onclick="switchMainTab('ACTIVE')" id="tabBtnActive" class="px-4 py-2 rounded-lg text-xs font-bold transition-all bg-amber-500 text-slate-950 shadow flex items-center gap-1.5">
                 <i data-lucide="arrow-right-left" class="w-4 h-4"></i>
                 <span>移動待ち伝票</span>
-                <span id="activeBadge" class="ml-1 bg-slate-950 text-amber-400 text-[10px] px-1.5 py-0.2 rounded-full font-black">0</span>
+                <span id="activeBadge" class="ml-1 bg-slate-950 text-amber-400 text-[10px] px-1.5 rounded-full font-black">0</span>
             </button>
             <button onclick="switchMainTab('COMPLETED')" id="tabBtnCompleted" class="px-4 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-slate-200 flex items-center gap-1.5">
                 <i data-lucide="check-circle-2" class="w-4 h-4"></i>
                 <span>移動完了・履歴</span>
-                <span id="completedBadge" class="ml-1 bg-slate-800 text-slate-300 text-[10px] px-1.5 py-0.2 rounded-full">0</span>
+                <span id="completedBadge" class="ml-1 bg-slate-800 text-slate-300 text-[10px] px-1.5 rounded-full">0</span>
             </button>
         </div>
 
         <!-- Action Controls -->
         <div class="flex items-center space-x-2">
-            <!-- Table Management Opener -->
             <button onclick="openTableMgmtModal()" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-bold transition-colors flex items-center gap-1.5" title="卓色分け・削除・追加">
                 <i data-lucide="palette" class="w-4 h-4 text-amber-400"></i>
-                <span class="hidden md:inline">卓設定 & 色分け</span>
+                <span class="hidden lg:inline">卓設定 &amp; 色分け</span>
             </button>
 
-            <!-- Sound Toggle -->
             <button id="soundToggleBtn" onclick="toggleSound()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors" title="通知音切替">
                 <i data-lucide="volume-2" id="soundIcon" class="w-5 h-5 text-emerald-400"></i>
             </button>
 
-            <!-- Auto Push Simulation Toggle -->
             <button id="simToggleBtn" onclick="togglePushSimulation()" class="flex items-center space-x-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs font-medium transition-colors">
                 <i data-lucide="radio" id="simIcon" class="w-4 h-4 text-slate-400"></i>
-                <span class="hidden md:inline">デモ移動:</span>
+                <span class="hidden lg:inline">デモ移動:</span>
                 <span id="simStatusText" class="font-bold text-slate-400">OFF</span>
             </button>
 
-            <!-- Add Transfer Order Modal Opener -->
-            <button onclick="openOrderModal()" class="flex items-center space-x-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-black text-xs shadow-lg shadow-amber-500/20 transition-all transform active:scale-95">
-                <i data-lucide="plus-circle" class="w-4.5 h-4.5"></i>
+            <button onclick="openOrderModal()" class="flex items-center space-x-1.5 px-4 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl font-black text-xs shadow-lg transition-all">
+                <i data-lucide="plus-circle" class="w-4 h-4"></i>
                 <span>移動オーダー発行</span>
             </button>
         </div>
     </header>
 
+    <!-- 起動エラー (古い端末で読み込みに失敗したときに表示) -->
+    <div id="bootError" class="bg-red-900 text-red-100 text-xs px-4 py-2"></div>
+
     <!-- Main Content Container -->
-    <main class="flex-1 p-4 overflow-y-auto bg-slate-950 relative">
-        
+    <main class="flex-1 p-4 overflow-y-auto bg-slate-950 relative" style="-webkit-overflow-scrolling: touch;">
+
         <!-- View 1: Active KDS Board -->
         <div id="viewActive" class="space-y-4">
-            <div id="activeGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 pb-12">
+            <div id="activeGrid" class="kds-grid pb-12">
                 <!-- Active order cards -->
             </div>
 
             <!-- Empty Active State -->
             <div id="emptyActive" class="hidden absolute inset-0 flex flex-col items-center justify-center text-center p-6 pointer-events-none">
                 <div class="bg-slate-900 border border-slate-800 p-8 rounded-3xl max-w-sm flex flex-col items-center shadow-2xl">
-                    <div class="p-4 bg-slate-800/80 text-emerald-400 rounded-2xl mb-4">
+                    <div class="p-4 bg-slate-800 text-emerald-400 rounded-2xl mb-4">
                         <i data-lucide="check-check" class="w-12 h-12"></i>
                     </div>
                     <h3 class="text-slate-200 font-bold text-lg mb-1">移動待ちの伝票はありません</h3>
@@ -122,7 +159,6 @@
 
         <!-- View 2: Simplified Completed Orders View -->
         <div id="viewCompleted" class="hidden space-y-4 max-w-5xl mx-auto pb-12">
-            <!-- Completed Summary & Search Filter Bar -->
             <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
                 <div class="flex items-center space-x-3 w-full sm:w-auto">
                     <div class="p-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl">
@@ -134,19 +170,16 @@
                     </div>
                 </div>
 
-                <!-- Quick Filter / Search -->
                 <div class="relative w-full sm:w-64">
                     <i data-lucide="search" class="w-4 h-4 text-slate-500 absolute left-3 top-3"></i>
                     <input type="text" id="completedSearchInput" oninput="renderCompletedOrders()" placeholder="卓番号やメモで検索..." class="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-200 outline-none focus:border-amber-500 transition-colors">
                 </div>
             </div>
 
-            <!-- Completed List -->
             <div id="completedList" class="space-y-2.5">
                 <!-- Completed order items rendered here -->
             </div>
 
-            <!-- Empty Completed State -->
             <div id="emptyCompleted" class="hidden text-center py-16 text-slate-500">
                 <i data-lucide="inbox" class="w-12 h-12 mx-auto mb-2 text-slate-700"></i>
                 <p class="text-xs font-medium">完了した移動伝票の履歴はありません</p>
@@ -160,14 +193,13 @@
             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="palette" class="w-5 h-5 text-amber-400"></i>
-                    <h2 class="font-bold text-slate-100 text-base">卓設定 (色分け & 削除・追加)</h2>
+                    <h2 class="font-bold text-slate-100 text-base">卓設定 (色分け &amp; 削除・追加)</h2>
                 </div>
                 <button onclick="closeTableMgmtModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
 
-            <!-- Add Table -->
             <div>
                 <label class="block text-xs font-bold text-slate-400 mb-1.5">新しい卓番号を追加</label>
                 <div class="flex gap-2">
@@ -178,14 +210,13 @@
                 </div>
             </div>
 
-            <!-- Existing Tables List with Color Picker & Delete button -->
             <div>
                 <div class="flex items-center justify-between mb-1.5">
                     <label class="block text-xs font-bold text-slate-400">登録済みの卓 (カラー変更 / 削除)</label>
                     <span class="text-[10px] text-slate-500">パレットから色を選んで個別に設定可能</span>
                 </div>
-                <div id="mgmtTablesGrid" class="space-y-2 max-h-72 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-slate-800">
-                    <!-- Table deletion chips rendered dynamically -->
+                <div id="mgmtTablesGrid" class="space-y-2 max-h-72 overflow-y-auto p-2 bg-slate-950 rounded-xl border border-slate-800" style="-webkit-overflow-scrolling: touch;">
+                    <!-- Table chips rendered dynamically -->
                 </div>
             </div>
 
@@ -197,11 +228,10 @@
         </div>
     </div>
 
-    <!-- Simplified Transfer Order Entry Modal -->
+    <!-- Transfer Order Entry Modal -->
     <div id="orderModal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 z-50 hidden">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
-            
-            <!-- Modal Header -->
+
             <div class="bg-slate-800/60 px-5 py-3 border-b border-slate-800 flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <i data-lucide="arrow-right-left" class="w-5 h-5 text-amber-400"></i>
@@ -212,15 +242,14 @@
                 </button>
             </div>
 
-            <!-- Modal Content Body -->
-            <div class="flex-1 overflow-y-auto p-4 space-y-4">
+            <div class="flex-1 overflow-y-auto p-4 space-y-4" style="-webkit-overflow-scrolling: touch;">
 
-                <!-- Gender Selector Section -->
+                <!-- Gender Selector -->
                 <div>
                     <label class="block text-xs font-bold text-slate-300 mb-1.5">
                         1. 移動対象（性別）を選択 <span class="text-slate-500 font-normal">※背景色が変化します</span>
                     </label>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="two-col">
                         <button type="button" onclick="selectGender('男性')" id="genderBtnMale" class="py-3 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 transition-all">
                             <span class="text-base">👨</span>
                             <span class="text-sm">男性 (青背景)</span>
@@ -232,38 +261,34 @@
                     </div>
                 </div>
 
-                <!-- Step 2: Select "From Table" -->
+                <!-- From Table -->
                 <div>
                     <label class="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
                         <span>2. 移動前の卓を選択 (移動元)</span>
                         <span id="fromSelectedBadge" class="text-amber-400 font-mono font-bold">未選択</span>
                     </label>
-                    <div id="fromTableButtons" class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-32 overflow-y-auto p-1.5 bg-slate-950 rounded-xl border border-slate-800">
-                        <!-- Table chips -->
+                    <div id="fromTableButtons" class="btn-grid max-h-32 overflow-y-auto p-1.5 bg-slate-950 rounded-xl border border-slate-800" style="-webkit-overflow-scrolling: touch;">
                     </div>
                 </div>
 
-                <!-- Arrow Indicator -->
                 <div class="flex justify-center my-0.5">
                     <div class="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
                         <i data-lucide="arrow-down" class="w-4 h-4"></i> 移動
                     </div>
                 </div>
 
-                <!-- Step 3: Select "To Table" -->
+                <!-- To Table -->
                 <div>
                     <label class="block text-xs font-bold text-slate-300 mb-1.5 flex items-center justify-between">
                         <span>3. 行き先の卓を選択 (移動先)</span>
                         <span id="toSelectedBadge" class="text-emerald-400 font-mono font-bold">未選択</span>
                     </label>
-                    <div id="toTableButtons" class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-32 overflow-y-auto p-1.5 bg-slate-950 rounded-xl border border-slate-800">
-                        <!-- Table chips -->
+                    <div id="toTableButtons" class="btn-grid max-h-32 overflow-y-auto p-1.5 bg-slate-950 rounded-xl border border-slate-800" style="-webkit-overflow-scrolling: touch;">
                     </div>
                 </div>
 
-                <!-- Handdrawn Note or Keyboard Text Note Selector -->
+                <!-- Note -->
                 <div class="border border-slate-800 rounded-xl bg-slate-950/50 overflow-hidden">
-                    <!-- Note Input Mode Switcher Header -->
                     <div class="px-3 py-2 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
                         <span class="text-xs font-bold text-amber-400 flex items-center gap-1.5">
                             <i data-lucide="file-text" class="w-4 h-4"></i> 指示メモ (オプション)
@@ -278,12 +303,10 @@
                         </div>
                     </div>
 
-                    <!-- Mode A: Textarea -->
                     <div id="noteModeText" class="p-3">
                         <textarea id="textNoteInput" rows="2" placeholder="例: お冷のおかわり準備、荷物カゴの移動をお願いします" class="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100 placeholder-slate-600 outline-none focus:border-amber-500 transition-colors resize-none"></textarea>
                     </div>
 
-                    <!-- Mode B: Handwriting Canvas -->
                     <div id="noteModeCanvas" class="hidden p-3 space-y-2">
                         <div class="flex items-center justify-between bg-slate-900 p-1.5 rounded-lg border border-slate-800">
                             <div class="flex items-center space-x-2">
@@ -310,12 +333,11 @@
 
             </div>
 
-            <!-- Modal Footer -->
             <div class="bg-slate-800/60 px-5 py-3 border-t border-slate-800 flex items-center justify-end space-x-3">
                 <button onclick="closeOrderModal()" class="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-colors">
                     キャンセル
                 </button>
-                <button onclick="submitTransferOrder()" class="flex-1 sm:flex-none px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-sm font-black shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-1.5">
+                <button onclick="submitTransferOrder()" class="flex-1 sm:flex-none px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-xl text-sm font-black shadow-lg transition-all flex items-center justify-center gap-1.5">
                     <i data-lucide="send" class="w-4 h-4"></i>
                     <span>移動指示送信</span>
                 </button>
@@ -335,1001 +357,17 @@
         </div>
     </div>
 
-    <!-- Application Script Logic -->
     <script>
-        // Preset Palette Colors for Table Distinction
-        const COLOR_PRESETS = [
-            { id: 'amber', name: 'Amber', bg: 'bg-amber-500/20', border: 'border-amber-500/60', text: 'text-amber-300', dot: '#f59e0b' },
-            { id: 'emerald', name: 'Emerald', bg: 'bg-emerald-500/20', border: 'border-emerald-500/60', text: 'text-emerald-300', dot: '#10b981' },
-            { id: 'cyan', name: 'Cyan', bg: 'bg-cyan-500/20', border: 'border-cyan-500/60', text: 'text-cyan-300', dot: '#06b6d4' },
-            { id: 'purple', name: 'Purple', bg: 'bg-purple-500/20', border: 'border-purple-500/60', text: 'text-purple-300', dot: '#a855f7' },
-            { id: 'rose', name: 'Rose', bg: 'bg-rose-500/20', border: 'border-rose-500/60', text: 'text-rose-300', dot: '#f43f5e' },
-            { id: 'indigo', name: 'Indigo', bg: 'bg-indigo-500/20', border: 'border-indigo-500/60', text: 'text-indigo-300', dot: '#6366f1' },
-            { id: 'orange', name: 'Orange', bg: 'bg-orange-500/20', border: 'border-orange-500/60', text: 'text-orange-300', dot: '#f97316' },
-            { id: 'slate', name: 'Slate', bg: 'bg-slate-800', border: 'border-slate-700', text: 'text-slate-300', dot: '#64748b' }
-        ];
-
-        // Registered Tables Array with Individual Color IDs
-        // (初期値。Firestore に卓設定がまだ無い場合はこの内容で作成されます)
-        const DEFAULT_TABLES = [
-            { name: '1', colorId: 'amber' },
-            { name: '2', colorId: 'cyan' },
-            { name: '3', colorId: 'purple' },
-            { name: '4', colorId: 'emerald' },
-            { name: '5', colorId: 'rose' },
-            { name: '6', colorId: 'indigo' },
-            { name: 'カウンター1', colorId: 'orange' },
-            { name: 'カウンター2', colorId: 'slate' }
-        ];
-        let registeredTables = DEFAULT_TABLES.map(t => ({ ...t }));
-
-        // State
-        let orders = [];
-        let currentTab = 'ACTIVE';
-        let soundEnabled = true;
-        let isSimulating = false;
-        let autoPushInterval = null;
-
-        // Selection State
-        let selectedGender = '男性';
-        let selectedFromTable = '1';
-        let selectedToTable = '3';
-        let activeNoteMode = 'text'; // 'text' | 'canvas'
-
-        // Modal Canvas State
-        const ticketCanvas = document.getElementById('ticketCanvas');
-        const ticketCtx = ticketCanvas.getContext('2d');
-        let isDrawing = false;
-        let modalPenColor = '#f87171';
-        let modalPenWidth = 4;
-        let modalTool = 'pen';
-        let lastPt = { x: 0, y: 0 };
-
-        window.onload = function() {
-            lucide.createIcons();
-            startClock();
-            initModalCanvas();
-            // デモデータは使わず、Firestore からのデータ受信で描画します
-            renderAllViews();
-
-            setInterval(updateTimersUI, 1000);
+        // 古い端末でスクリプトが読めなかった場合に画面へ表示
+        window.onerror = function (msg, src, line) {
+            var el = document.getElementById('bootError');
+            if (el) {
+                el.style.display = 'block';
+                el.textContent = 'エラー: ' + msg + ' (' + String(src || '').split('/').pop() + ':' + line + ')';
+            }
         };
-
-        // ===== 端末間同期 (Firestore) との橋渡し =====
-        // 下部の <script type="module"> から呼ばれます。
-        // window.SyncApi : addOrder(order) / updateOrder(id, patch) / saveTables(tables)
-
-        // Firestore から全オーダーを受信
-        function applyRemoteOrders(list) {
-            orders = list;
-            renderAllViews();
-        }
-
-        // Firestore から卓設定を受信
-        function applyRemoteTables(tables) {
-            registeredTables = tables;
-            if (!registeredTables.some(t => t.name === selectedFromTable)) {
-                selectedFromTable = registeredTables[0] ? registeredTables[0].name : '';
-            }
-            if (!registeredTables.some(t => t.name === selectedToTable)) {
-                selectedToTable = registeredTables[1] ? registeredTables[1].name : (registeredTables[0] ? registeredTables[0].name : '');
-            }
-            if (!document.getElementById('tableMgmtModal').classList.contains('hidden')) renderMgmtTablesGrid();
-            if (!document.getElementById('orderModal').classList.contains('hidden')) renderTableButtons();
-            renderAllViews();
-        }
-
-        // 他の端末から新しい移動オーダーが届いたとき
-        function notifyRemoteOrder(order) {
-            playChime('push');
-            showToast("NEW TRANSFER ORDER", `${order.gender || ''} 卓 ${order.fromTable} ➔ 卓 ${order.toTable} 移動指示`);
-        }
-
-        // 同期状態の表示 ('online' | 'offline' | 'connecting' | 'local' | 'error')
-        function setSyncStatus(state) {
-            const wrap = document.getElementById('syncStatus');
-            const dot = document.getElementById('syncDot');
-            const txt = document.getElementById('syncText');
-            const map = {
-                online:     { c: 'text-emerald-400', d: 'bg-emerald-500 animate-pulse', t: '同期中' },
-                offline:    { c: 'text-amber-400',   d: 'bg-amber-500',                 t: 'オフライン (再接続待ち)' },
-                connecting: { c: 'text-slate-400',   d: 'bg-slate-500 animate-pulse',   t: '接続中…' },
-                local:      { c: 'text-red-400',     d: 'bg-red-500',                   t: 'Firebase未設定 (この端末のみ)' },
-                error:      { c: 'text-red-400',     d: 'bg-red-500',                   t: '同期エラー' }
-            };
-            const s = map[state] || map.connecting;
-            wrap.className = `flex items-center font-medium ${s.c}`;
-            dot.className = `w-2 h-2 rounded-full mr-1.5 ${s.d}`;
-            txt.textContent = s.t;
-        }
-
-        function genDisplayNo() {
-            return `TRF-${Math.floor(100 + Math.random() * 900)}`;
-        }
-
-        function startClock() {
-            const clockEl = document.getElementById('clock');
-            function update() {
-                clockEl.textContent = new Date().toTimeString().split(' ')[0];
-            }
-            update();
-            setInterval(update, 1000);
-        }
-
-        // Helper to get Table Color Preset
-        function getTableColorObj(tblName) {
-            const found = registeredTables.find(t => t.name === tblName);
-            const colorId = found ? found.colorId : 'amber';
-            return COLOR_PRESETS.find(p => p.id === colorId) || COLOR_PRESETS[0];
-        }
-
-        // Web Audio Synthesizer sound generator
-        function playChime(type = 'push') {
-            if (!soundEnabled) return;
-            try {
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                if (!AudioCtx) return;
-                const ctx = new AudioCtx();
-                
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-
-                if (type === 'push') {
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(587.33, ctx.currentTime);
-                    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.12);
-                    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.4);
-                } else if (type === 'complete') {
-                    osc.type = 'triangle';
-                    osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-                    osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.1);
-                    osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.2);
-                    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.5);
-                }
-            } catch (e) {}
-        }
-
-        function toggleSound() {
-            soundEnabled = !soundEnabled;
-            const icon = document.getElementById('soundIcon');
-            if (soundEnabled) {
-                icon.setAttribute('data-lucide', 'volume-2');
-                icon.className = "w-5 h-5 text-emerald-400";
-                showToast("サウンド通知", "音声をONにしました");
-            } else {
-                icon.setAttribute('data-lucide', 'volume-x');
-                icon.className = "w-5 h-5 text-slate-500";
-                showToast("サウンド通知", "音声をオフにしました");
-            }
-            lucide.createIcons();
-        }
-
-        // Demo Seed Orders
-        function seedDemoData() {
-            const now = Date.now();
-            orders = [
-                {
-                    id: 'TRF-101',
-                    gender: '男性',
-                    fromTable: '1',
-                    toTable: '5',
-                    item: '移動',
-                    createdAt: now - (2 * 60 * 1000),
-                    status: 'ACTIVE',
-                    noteType: 'canvas',
-                    canvasData: createSampleCanvasData('水グラス追加で持ち運び', '#f87171'),
-                    textNote: ''
-                },
-                {
-                    id: 'TRF-102',
-                    gender: '女性',
-                    fromTable: 'カウンター1',
-                    toTable: '4',
-                    item: '移動',
-                    createdAt: now - (6 * 60 * 1000),
-                    status: 'ACTIVE',
-                    noteType: 'text',
-                    canvasData: null,
-                    textNote: '上着（黒コート）もお席へ移動願います'
-                },
-                {
-                    id: 'TRF-100',
-                    gender: '男性',
-                    fromTable: '2',
-                    toTable: '6',
-                    item: '移動',
-                    createdAt: now - (20 * 60 * 1000),
-                    completedAt: now - (15 * 60 * 1000),
-                    status: 'COMPLETED',
-                    noteType: 'text',
-                    canvasData: null,
-                    textNote: 'ドリンク引き継ぎ完了'
-                }
-            ];
-        }
-
-        function createSampleCanvasData(text, color) {
-            const c = document.createElement('canvas');
-            c.width = 300;
-            c.height = 100;
-            const ctx = c.getContext('2d');
-            ctx.fillStyle = color;
-            ctx.font = 'bold 16px sans-serif';
-            ctx.fillText(text, 15, 45);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.moveTo(10, 55);
-            ctx.lineTo(290, 55);
-            ctx.stroke();
-            return c.toDataURL();
-        }
-
-        // View Switching
-        function switchMainTab(tab) {
-            currentTab = tab;
-            const btnActive = document.getElementById('tabBtnActive');
-            const btnCompleted = document.getElementById('tabBtnCompleted');
-            const viewActive = document.getElementById('viewActive');
-            const viewCompleted = document.getElementById('viewCompleted');
-
-            if (tab === 'ACTIVE') {
-                btnActive.className = "px-4 py-2 rounded-lg text-xs font-bold transition-all bg-amber-500 text-slate-950 shadow flex items-center gap-1.5";
-                btnCompleted.className = "px-4 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-slate-200 flex items-center gap-1.5";
-                viewActive.classList.remove('hidden');
-                viewCompleted.classList.add('hidden');
-            } else {
-                btnActive.className = "px-4 py-2 rounded-lg text-xs font-bold transition-all text-slate-400 hover:text-slate-200 flex items-center gap-1.5";
-                btnCompleted.className = "px-4 py-2 rounded-lg text-xs font-bold transition-all bg-amber-500 text-slate-950 shadow flex items-center gap-1.5";
-                viewActive.classList.add('hidden');
-                viewCompleted.classList.remove('hidden');
-            }
-            renderAllViews();
-        }
-
-        function renderAllViews() {
-            renderActiveOrders();
-            renderCompletedOrders();
-            updateBadges();
-            lucide.createIcons();
-        }
-
-        // Render Active KDS Board
-        function renderActiveOrders() {
-            const grid = document.getElementById('activeGrid');
-            const empty = document.getElementById('emptyActive');
-            grid.innerHTML = '';
-
-            const actives = orders.filter(o => o.status === 'ACTIVE');
-            actives.sort((a,b) => a.createdAt - b.createdAt);
-
-            if (actives.length === 0) {
-                empty.classList.remove('hidden');
-                return;
-            } else {
-                empty.classList.add('hidden');
-            }
-
-            actives.forEach(order => {
-                const elapsedMs = Date.now() - order.createdAt;
-                const elapsedMins = Math.floor(elapsedMs / (1000 * 60));
-                const elapsedSecs = Math.floor((elapsedMs % (1000 * 60)) / 1000);
-
-                const isMale = (order.gender || '男性') === '男性';
-
-                // Male / Female High-Visibility Prominent Background Styling
-                const genderCardClass = isMale 
-                    ? "bg-slate-900 border-sky-400/80 shadow-sky-950/80 text-sky-100" 
-                    : "bg-slate-900 border-pink-400/80 shadow-pink-950/80 text-pink-100";
-                
-                const cardFillOverlayClass = isMale
-                    ? "bg-gradient-to-br from-sky-950/90 via-slate-900/95 to-slate-900"
-                    : "bg-gradient-to-br from-pink-950/90 via-slate-900/95 to-slate-900";
-
-                const genderBadgeClass = isMale 
-                    ? "bg-sky-500 text-slate-950 font-black border-sky-300" 
-                    : "bg-pink-500 text-slate-950 font-black border-pink-300";
-
-                const genderIcon = isMale ? "👨" : "👩";
-                const genderLabel = isMale ? "男性 (MALE)" : "女性 (FEMALE)";
-
-                let timerBadgeClass = "bg-emerald-500/20 text-emerald-300 border-emerald-500/40";
-                let urgencyBorder = genderCardClass;
-
-                if (elapsedMins >= 10) {
-                    urgencyBorder = "urgency-danger bg-slate-900 border-red-500";
-                    timerBadgeClass = "bg-red-500/30 text-red-300 border-red-500/60 animate-pulse";
-                } else if (elapsedMins >= 5) {
-                    timerBadgeClass = "bg-amber-500/30 text-amber-300 border-amber-500/50";
-                }
-
-                // Table Custom Colors for From/To
-                const fromColor = getTableColorObj(order.fromTable);
-                const toColor = getTableColorObj(order.toTable);
-
-                // Render Note Block (Text vs Canvas)
-                let noteHtml = '';
-                if (order.noteType === 'text' && order.textNote) {
-                    noteHtml = `
-                        <div class="mb-3 rounded-xl border border-slate-700/80 bg-slate-950/90 p-2.5">
-                            <div class="text-[10px] font-bold text-amber-400 mb-1 flex items-center gap-1">
-                                <i data-lucide="message-square" class="w-3 h-3"></i> 指示メモ (テキスト)
-                            </div>
-                            <div class="text-xs text-slate-100 font-medium leading-relaxed break-words">${escapeHtml(order.textNote)}</div>
-                        </div>
-                    `;
-                } else if (order.noteType === 'canvas' && order.canvasData) {
-                    noteHtml = `
-                        <div class="mb-3 rounded-xl border border-slate-700/80 bg-slate-950/90 p-2">
-                            <div class="text-[10px] font-bold text-amber-400 mb-1 flex items-center gap-1">
-                                <i data-lucide="pen-tool" class="w-3 h-3"></i> 指示メモ (手書き)
-                            </div>
-                            <img src="${order.canvasData}" class="w-full h-auto max-h-20 object-contain rounded bg-slate-900 border border-slate-800" alt="Note">
-                        </div>
-                    `;
-                }
-
-                const card = document.createElement('div');
-                card.className = `rounded-2xl border-2 p-4 flex flex-col shadow-2xl relative overflow-hidden transition-all ${cardFillOverlayClass} ${urgencyBorder}`;
-                card.innerHTML = `
-                    <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3 z-10">
-                        <div class="flex items-center gap-2">
-                            <span class="text-xs px-3 py-1 rounded-xl border flex items-center gap-1.5 shadow ${genderBadgeClass}">
-                                <span class="text-base">${genderIcon}</span>
-                                <span class="tracking-wide">${genderLabel}</span>
-                            </span>
-                        </div>
-                        <div class="px-2.5 py-1 rounded-xl border text-xs font-mono font-bold flex items-center space-x-1 ${timerBadgeClass}" data-timer="${order.createdAt}">
-                            <i data-lucide="clock" class="w-3.5 h-3.5"></i>
-                            <span>${pad(elapsedMins)}:${pad(elapsedSecs)}</span>
-                        </div>
-                    </div>
-
-                    <!-- From -> To Table Visualization with Custom Colors -->
-                    <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 flex items-center justify-between mb-3 shadow-inner z-10">
-                        <div class="text-center flex-1">
-                            <div class="text-[10px] font-bold text-slate-400 mb-0.5">移動元</div>
-                            <div class="inline-block px-3 py-1 rounded-xl border font-black text-lg font-mono ${fromColor.bg} ${fromColor.border} ${fromColor.text}">
-                                卓 ${escapeHtml(order.fromTable)}
-                            </div>
-                        </div>
-                        <i data-lucide="arrow-right" class="w-6 h-6 ${isMale ? 'text-sky-300' : 'text-pink-300'} flex-none mx-2"></i>
-                        <div class="text-center flex-1">
-                            <div class="text-[10px] font-bold text-slate-400 mb-0.5">移動先</div>
-                            <div class="inline-block px-3 py-1 rounded-xl border font-black text-lg font-mono ${toColor.bg} ${toColor.border} ${toColor.text}">
-                                卓 ${escapeHtml(order.toTable)}
-                            </div>
-                        </div>
-                    </div>
-
-                    ${noteHtml}
-
-                    <button onclick="completeOrder('${order.id}')" class="w-full py-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 rounded-xl font-black text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2 active:scale-95 z-10">
-                        <i data-lucide="check-circle" class="w-5 h-5"></i>
-                        <span>完了 (Complete)</span>
-                    </button>
-                `;
-                grid.appendChild(card);
-            });
-        }
-
-        // Render Simplified Completed View with Gender Colors
-        function renderCompletedOrders() {
-            const list = document.getElementById('completedList');
-            const empty = document.getElementById('emptyCompleted');
-            const search = document.getElementById('completedSearchInput').value.trim().toLowerCase();
-            list.innerHTML = '';
-
-            let completed = orders.filter(o => o.status === 'COMPLETED');
-            document.getElementById('completedTodayCount').textContent = completed.length;
-
-            if (search) {
-                completed = completed.filter(o => 
-                    o.fromTable.toLowerCase().includes(search) || 
-                    o.toTable.toLowerCase().includes(search) ||
-                    (o.gender && o.gender.toLowerCase().includes(search)) ||
-                    (o.textNote && o.textNote.toLowerCase().includes(search))
-                );
-            }
-
-            if (completed.length === 0) {
-                empty.classList.remove('hidden');
-                return;
-            } else {
-                empty.classList.add('hidden');
-            }
-
-            completed.sort((a,b) => (b.completedAt || 0) - (a.completedAt || 0));
-
-            completed.forEach(order => {
-                const finishedTime = order.completedAt ? new Date(order.completedAt).toLocaleTimeString().slice(0,5) : '--:--';
-                const isMale = (order.gender || '男性') === '男性';
-                
-                const rowGenderBg = isMale ? "bg-sky-950/40 border-sky-500/50" : "bg-pink-950/40 border-pink-500/50";
-                const genderBadgeClass = isMale ? "bg-sky-500 text-slate-950 font-black" : "bg-pink-500 text-slate-950 font-black";
-                const genderIcon = isMale ? "👨" : "👩";
-
-                const fromColor = getTableColorObj(order.fromTable);
-                const toColor = getTableColorObj(order.toTable);
-
-                let notePreview = '';
-                if (order.noteType === 'text' && order.textNote) {
-                    notePreview = `<span class="text-amber-400">メモ: ${escapeHtml(order.textNote)}</span>`;
-                } else if (order.noteType === 'canvas' && order.canvasData) {
-                    notePreview = `<span class="text-amber-400">手書きメモあり</span>`;
-                }
-
-                const row = document.createElement('div');
-                row.className = `border-2 rounded-2xl p-3.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg transition-colors ${rowGenderBg}`;
-                row.innerHTML = `
-                    <div class="flex items-center space-x-3 flex-1 min-w-0">
-                        <span class="text-xs px-2.5 py-1 rounded-xl flex items-center gap-1 flex-none ${genderBadgeClass}">
-                            <span>${genderIcon}</span>
-                            <span>${order.gender || '男性'}</span>
-                        </span>
-                        
-                        <div class="flex items-center gap-1.5 flex-none font-mono font-bold text-sm">
-                            <span class="px-2.5 py-1 rounded-lg border ${fromColor.bg} ${fromColor.border} ${fromColor.text}">卓 ${escapeHtml(order.fromTable)}</span>
-                            <i data-lucide="arrow-right" class="w-4 h-4 text-slate-400"></i>
-                            <span class="px-2.5 py-1 rounded-lg border ${toColor.bg} ${toColor.border} ${toColor.text}">卓 ${escapeHtml(order.toTable)}</span>
-                        </div>
-
-                        <div class="truncate">
-                            <div class="text-xs font-bold text-slate-200 truncate">商品: 移動 ${notePreview ? `• ${notePreview}` : ''}</div>
-                            <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
-                                <span>完了: ${finishedTime}</span>
-                                <span>•</span>
-                                <span>ID: ${escapeHtml(order.no || order.id)}</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <button onclick="restoreOrder('${order.id}')" class="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-amber-400 border border-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 flex-none active:scale-95">
-                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
-                        <span>調理中に復元</span>
-                    </button>
-                `;
-                list.appendChild(row);
-            });
-
-            lucide.createIcons();
-        }
-
-        // Actions
-        function completeOrder(id) {
-            const order = orders.find(o => o.id === id);
-            if (order) {
-                window.SyncApi.updateOrder(id, { status: 'COMPLETED', completedAt: Date.now() });
-                playChime('complete');
-                showToast("移動完了", `${order.gender || ''} 卓 ${order.fromTable} ➔ 卓 ${order.toTable} の移動を完了しました`);
-            }
-        }
-
-        function restoreOrder(id) {
-            const order = orders.find(o => o.id === id);
-            if (order) {
-                window.SyncApi.updateOrder(id, { status: 'ACTIVE', completedAt: null });
-                showToast("伝票を復元", `${order.gender || ''} 卓 ${order.fromTable} ➔ 卓 ${order.toTable} の移動指示を復元しました`);
-            }
-        }
-
-        function updateBadges() {
-            document.getElementById('activeBadge').textContent = orders.filter(o => o.status === 'ACTIVE').length;
-            document.getElementById('completedBadge').textContent = orders.filter(o => o.status === 'COMPLETED').length;
-        }
-
-        function updateTimersUI() {
-            const timerEls = document.querySelectorAll('[data-timer]');
-            const now = Date.now();
-            timerEls.forEach(el => {
-                const createdAt = parseInt(el.getAttribute('data-timer'));
-                const elapsedMs = now - createdAt;
-                const elapsedMins = Math.floor(elapsedMs / (1000 * 60));
-                const elapsedSecs = Math.floor((elapsedMs % (1000 * 60)) / 1000);
-                const span = el.querySelector('span');
-                if (span) span.textContent = `${pad(elapsedMins)}:${pad(elapsedSecs)}`;
-            });
-        }
-
-        // Table Management & Custom Color Picker
-        function openTableMgmtModal() {
-            renderMgmtTablesGrid();
-            document.getElementById('tableMgmtModal').classList.remove('hidden');
-        }
-
-        function closeTableMgmtModal() {
-            document.getElementById('tableMgmtModal').classList.add('hidden');
-        }
-
-        function handleAddTableFromMgmt() {
-            const input = document.getElementById('modalAddTableInput');
-            const val = input.value.trim();
-            if (!val) return;
-
-            if (!registeredTables.some(t => t.name === val)) {
-                // Random default color assignment from presets
-                const randColor = COLOR_PRESETS[Math.floor(Math.random() * COLOR_PRESETS.length)].id;
-                registeredTables.push({ name: val, colorId: randColor });
-                window.SyncApi.saveTables(registeredTables);
-                showToast("卓追加", `卓番号「${val}」を追加しました`);
-            } else {
-                showToast("お知らせ", `卓番号「${val}」は既に登録されています`);
-            }
-            input.value = '';
-            renderMgmtTablesGrid();
-            renderTableButtons();
-        }
-
-        function setTableColor(tblName, colorId) {
-            const tbl = registeredTables.find(t => t.name === tblName);
-            if (tbl) {
-                tbl.colorId = colorId;
-                window.SyncApi.saveTables(registeredTables);
-                renderMgmtTablesGrid();
-                renderTableButtons();
-                renderAllViews();
-            }
-        }
-
-        function removeTable(tblName) {
-            const inActiveOrder = orders.some(o => o.status === 'ACTIVE' && (o.fromTable === tblName || o.toTable === tblName));
-            if (inActiveOrder) {
-                showToast("削除不可", `卓 ${tblName} は現在移動待ちの伝票で使用中のため削除できません`);
-                return;
-            }
-
-            registeredTables = registeredTables.filter(t => t.name !== tblName);
-            window.SyncApi.saveTables(registeredTables);
-            
-            if (selectedFromTable === tblName) {
-                selectedFromTable = registeredTables.length > 0 ? registeredTables[0].name : '';
-            }
-            if (selectedToTable === tblName) {
-                selectedToTable = registeredTables.length > 1 ? registeredTables[1].name : (registeredTables[0] ? registeredTables[0].name : '');
-            }
-
-            showToast("卓削除", `卓 「${tblName}」 を削除しました`);
-            renderMgmtTablesGrid();
-            renderTableButtons();
-        }
-
-        function renderMgmtTablesGrid() {
-            const container = document.getElementById('mgmtTablesGrid');
-            container.innerHTML = '';
-
-            if (registeredTables.length === 0) {
-                container.innerHTML = `<div class="text-center py-4 text-xs text-slate-500">登録されている卓はありません</div>`;
-                return;
-            }
-
-            registeredTables.forEach(tbl => {
-                const curColor = COLOR_PRESETS.find(p => p.id === tbl.colorId) || COLOR_PRESETS[0];
-
-                const item = document.createElement('div');
-                item.className = "flex flex-col sm:flex-row sm:items-center justify-between bg-slate-900 border border-slate-800 p-2.5 rounded-xl gap-2 hover:border-slate-700 transition-colors";
-                
-                // Color dots HTML
-                const dotsHtml = COLOR_PRESETS.map(p => `
-                    <button type="button" onclick="setTableColor('${escapeHtml(tbl.name)}', '${p.id}')" class="w-4 h-4 rounded-full transition-transform ${p.id === tbl.colorId ? 'scale-125 ring-2 ring-white' : 'hover:scale-110 opacity-70 hover:opacity-100'}" style="background-color: ${p.dot}" title="${p.name}"></button>
-                `).join('');
-
-                item.innerHTML = `
-                    <div class="flex items-center space-x-2">
-                        <span class="inline-block px-2.5 py-1 rounded-lg border text-xs font-mono font-bold ${curColor.bg} ${curColor.border} ${curColor.text}">
-                            卓 ${escapeHtml(tbl.name)}
-                        </span>
-                    </div>
-
-                    <div class="flex items-center justify-between sm:justify-end gap-3">
-                        <div class="flex items-center space-x-1.5 bg-slate-950 px-2 py-1 rounded-lg border border-slate-800">
-                            ${dotsHtml}
-                        </div>
-                        <button onclick="removeTable('${escapeHtml(tbl.name)}')" class="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/20 rounded-lg transition-colors flex-none" title="この卓を削除">
-                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                        </button>
-                    </div>
-                `;
-                container.appendChild(item);
-            });
-            lucide.createIcons();
-        }
-
-        function selectGender(gender) {
-            selectedGender = gender;
-            renderGenderButtons();
-        }
-
-        function renderGenderButtons() {
-            const btnMale = document.getElementById('genderBtnMale');
-            const btnFemale = document.getElementById('genderBtnFemale');
-
-            if (selectedGender === '男性') {
-                btnMale.className = "py-3 px-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-2 transition-all bg-sky-950 border-sky-400 text-sky-200 shadow-lg shadow-sky-950/50";
-                btnFemale.className = "py-3 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 transition-all bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200";
-            } else {
-                btnMale.className = "py-3 px-3 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 transition-all bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200";
-                btnFemale.className = "py-3 px-3 rounded-xl border-2 font-bold text-xs flex items-center justify-center gap-2 transition-all bg-pink-950 border-pink-400 text-pink-200 shadow-lg shadow-pink-950/50";
-            }
-        }
-
-        function renderTableButtons() {
-            renderGenderButtons();
-            const fromContainer = document.getElementById('fromTableButtons');
-            const toContainer = document.getElementById('toTableButtons');
-
-            fromContainer.innerHTML = '';
-            toContainer.innerHTML = '';
-
-            if (registeredTables.length === 0) {
-                fromContainer.innerHTML = `<div class="col-span-full text-center py-2 text-xs text-slate-500">卓が登録されていません</div>`;
-                toContainer.innerHTML = `<div class="col-span-full text-center py-2 text-xs text-slate-500">卓が登録されていません</div>`;
-                return;
-            }
-
-            registeredTables.forEach(tblObj => {
-                const tbl = tblObj.name;
-                const colorObj = getTableColorObj(tbl);
-
-                // From Table Button
-                const btnFrom = document.createElement('button');
-                btnFrom.type = 'button';
-                btnFrom.onclick = () => selectFromTable(tbl);
-                btnFrom.className = selectedFromTable === tbl
-                    ? `px-2.5 py-2 rounded-xl border-2 font-black font-mono text-xs shadow-md ${colorObj.bg} ${colorObj.border} ${colorObj.text} ring-2 ring-amber-400`
-                    : `px-2.5 py-2 rounded-xl border font-bold font-mono text-xs opacity-70 hover:opacity-100 ${colorObj.bg} ${colorObj.border} ${colorObj.text}`;
-                btnFrom.textContent = `卓 ${tbl}`;
-                fromContainer.appendChild(btnFrom);
-
-                // To Table Button
-                const btnTo = document.createElement('button');
-                btnTo.type = 'button';
-                btnTo.onclick = () => selectToTable(tbl);
-                btnTo.className = selectedToTable === tbl
-                    ? `px-2.5 py-2 rounded-xl border-2 font-black font-mono text-xs shadow-md ${colorObj.bg} ${colorObj.border} ${colorObj.text} ring-2 ring-emerald-400`
-                    : `px-2.5 py-2 rounded-xl border font-bold font-mono text-xs opacity-70 hover:opacity-100 ${colorObj.bg} ${colorObj.border} ${colorObj.text}`;
-                btnTo.textContent = `卓 ${tbl}`;
-                toContainer.appendChild(btnTo);
-            });
-
-            document.getElementById('fromSelectedBadge').textContent = selectedFromTable ? `卓 ${selectedFromTable}` : '未選択';
-            document.getElementById('toSelectedBadge').textContent = selectedToTable ? `卓 ${selectedToTable}` : '未選択';
-        }
-
-        function selectFromTable(tbl) {
-            selectedFromTable = tbl;
-            renderTableButtons();
-        }
-
-        function selectToTable(tbl) {
-            selectedToTable = tbl;
-            renderTableButtons();
-        }
-
-        // Note Input Switcher Logic
-        function switchNoteMode(mode) {
-            activeNoteMode = mode;
-            const btnText = document.getElementById('noteTabBtnText');
-            const btnCanvas = document.getElementById('noteTabBtnCanvas');
-            const secText = document.getElementById('noteModeText');
-            const secCanvas = document.getElementById('noteModeCanvas');
-
-            if (mode === 'text') {
-                btnText.className = "px-3 py-1 rounded-md text-xs font-bold transition-all bg-amber-500 text-slate-950 flex items-center gap-1 shadow";
-                btnCanvas.className = "px-3 py-1 rounded-md text-xs font-bold transition-all text-slate-400 hover:text-slate-200 flex items-center gap-1";
-                secText.classList.remove('hidden');
-                secCanvas.classList.add('hidden');
-            } else {
-                btnText.className = "px-3 py-1 rounded-md text-xs font-bold transition-all text-slate-400 hover:text-slate-200 flex items-center gap-1";
-                btnCanvas.className = "px-3 py-1 rounded-md text-xs font-bold transition-all bg-amber-500 text-slate-950 flex items-center gap-1 shadow";
-                secText.classList.add('hidden');
-                secCanvas.classList.remove('hidden');
-                setTimeout(resizeModalCanvas, 50);
-            }
-        }
-
-        // Modal Order Entry Operations
-        function openOrderModal() {
-            renderTableButtons();
-            clearModalCanvas();
-            document.getElementById('textNoteInput').value = '';
-            switchNoteMode('text');
-            document.getElementById('orderModal').classList.remove('hidden');
-        }
-
-        function closeOrderModal() {
-            document.getElementById('orderModal').classList.add('hidden');
-        }
-
-        function submitTransferOrder() {
-            if (!selectedFromTable || !selectedToTable) {
-                showToast("エラー", "移動元と移動先の両方の卓を選択してください");
-                return;
-            }
-
-            if (selectedFromTable === selectedToTable) {
-                showToast("警告", "移動元と移動先に同じ卓が選択されています");
-                return;
-            }
-
-            let canvasData = null;
-            let textNote = '';
-
-            if (activeNoteMode === 'text') {
-                textNote = document.getElementById('textNoteInput').value.trim();
-            } else if (activeNoteMode === 'canvas' && hasCanvasContent(ticketCanvas)) {
-                canvasData = ticketCanvas.toDataURL();
-            }
-
-            const newOrder = {
-                no: genDisplayNo(),
-                gender: selectedGender,
-                fromTable: selectedFromTable,
-                toTable: selectedToTable,
-                item: '移動',
-                createdAt: Date.now(),
-                status: 'ACTIVE',
-                noteType: activeNoteMode,
-                canvasData,
-                textNote
-            };
-
-            window.SyncApi.addOrder(newOrder);
-            closeOrderModal();
-            playChime('push');
-            showToast("移動指示送信", `${selectedGender} 卓 ${selectedFromTable} ➔ 卓 ${selectedToTable} の移動指示を送信しました`);
-        }
-
-        // Canvas Controls
-        function initModalCanvas() {
-            ticketCanvas.addEventListener('pointerdown', startModalDraw);
-            ticketCanvas.addEventListener('pointermove', modalDraw);
-            ticketCanvas.addEventListener('pointerup', stopModalDraw);
-            ticketCanvas.addEventListener('pointercancel', stopModalDraw);
-        }
-
-        function resizeModalCanvas() {
-            const rect = ticketCanvas.parentElement.getBoundingClientRect();
-            ticketCanvas.width = rect.width || 300;
-            ticketCanvas.height = rect.height || 100;
-            ticketCtx.lineCap = 'round';
-            ticketCtx.lineJoin = 'round';
-        }
-
-        function getModalPt(e) {
-            const rect = ticketCanvas.getBoundingClientRect();
-            return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-        }
-
-        function startModalDraw(e) {
-            isDrawing = true;
-            lastPt = getModalPt(e);
-        }
-
-        function modalDraw(e) {
-            if (!isDrawing) return;
-            e.preventDefault();
-            const currentPt = getModalPt(e);
-            ticketCtx.beginPath();
-            if (modalTool === 'eraser') {
-                ticketCtx.globalCompositeOperation = 'destination-out';
-                ticketCtx.lineWidth = modalPenWidth * 4;
-            } else {
-                ticketCtx.globalCompositeOperation = 'source-over';
-                ticketCtx.strokeStyle = modalPenColor;
-                ticketCtx.lineWidth = modalPenWidth;
-            }
-            ticketCtx.moveTo(lastPt.x, lastPt.y);
-            ticketCtx.lineTo(currentPt.x, currentPt.y);
-            ticketCtx.stroke();
-            lastPt = currentPt;
-        }
-
-        function stopModalDraw() { isDrawing = false; }
-
-        function setModalPenColor(color) {
-            modalPenColor = color;
-            setModalTool('pen');
-            document.querySelectorAll('.modal-color-btn').forEach(btn => {
-                if (btn.dataset.color === color) {
-                    btn.classList.add('ring-2', 'ring-amber-400', 'ring-offset-1', 'ring-offset-slate-900');
-                } else {
-                    btn.classList.remove('ring-2', 'ring-amber-400', 'ring-offset-1', 'ring-offset-slate-900');
-                }
-            });
-        }
-
-        function setModalTool(tool) {
-            modalTool = tool;
-            const eraserBtn = document.getElementById('modalEraserBtn');
-            eraserBtn.className = tool === 'eraser' ? "p-1 text-amber-400 bg-slate-800 rounded" : "p-1 text-slate-400 hover:text-slate-100 rounded";
-        }
-
-        function clearModalCanvas() {
-            ticketCtx.clearRect(0, 0, ticketCanvas.width, ticketCanvas.height);
-        }
-
-        function hasCanvasContent(canvas) {
-            const ctx = canvas.getContext('2d');
-            const pixelBuffer = new Uint32Array(
-                ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer
-            );
-            return pixelBuffer.some(color => color !== 0);
-        }
-
-        // Push Simulation Toggle
-        function togglePushSimulation() {
-            isSimulating = !isSimulating;
-            const statusTxt = document.getElementById('simStatusText');
-            const icon = document.getElementById('simIcon');
-
-            if (isSimulating) {
-                statusTxt.textContent = "ON";
-                statusTxt.className = "font-bold text-amber-400";
-                icon.className = "w-4 h-4 text-amber-400 animate-spin";
-                simulateIncomingPush();
-                autoPushInterval = setInterval(simulateIncomingPush, 8000);
-            } else {
-                statusTxt.textContent = "OFF";
-                statusTxt.className = "font-bold text-slate-400";
-                icon.className = "w-4 h-4 text-slate-400";
-                if (autoPushInterval) clearInterval(autoPushInterval);
-            }
-        }
-
-        function simulateIncomingPush() {
-            if (registeredTables.length < 2) return;
-
-            const fromIdx = Math.floor(Math.random() * registeredTables.length);
-            let toIdx = Math.floor(Math.random() * registeredTables.length);
-            if (toIdx === fromIdx) toIdx = (fromIdx + 1) % registeredTables.length;
-
-            const fromTbl = registeredTables[fromIdx].name;
-            const toTbl = registeredTables[toIdx].name;
-            const simGender = Math.random() > 0.5 ? '男性' : '女性';
-            const isText = Math.random() > 0.5;
-
-            const newOrder = {
-                no: genDisplayNo(),
-                gender: simGender,
-                fromTable: fromTbl,
-                toTable: toTbl,
-                item: '移動',
-                createdAt: Date.now(),
-                status: 'ACTIVE',
-                noteType: isText ? 'text' : 'canvas',
-                canvasData: !isText ? createSampleCanvasData('急ぎで移動願います', simGender === '男性' ? '#60a5fa' : '#f472b6') : null,
-                textNote: isText ? 'お冷やカトラリーのセットも一緒にご用意ください' : ''
-            };
-            window.SyncApi.addOrder(newOrder);
-            playChime('push');
-            showToast("NEW TRANSFER ORDER", `${simGender} 卓 ${fromTbl} ➔ 卓 ${toTbl} 移動指示`);
-        }
-
-        function pad(n) { return n < 10 ? '0' + n : n; }
-        function escapeHtml(s) {
-            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        }
-
-        function showToast(title, msg) {
-            const toast = document.getElementById('toast');
-            document.getElementById('toastTitle').textContent = title;
-            document.getElementById('toastMsg').textContent = msg;
-            toast.classList.remove('translate-y-20', 'opacity-0');
-            toast.classList.add('translate-y-0', 'opacity-100');
-            setTimeout(() => {
-                toast.classList.remove('translate-y-0', 'opacity-100');
-                toast.classList.add('translate-y-20', 'opacity-0');
-            }, 3000);
-        }
     </script>
-
-    <!-- ===== 端末間リアルタイム同期 (Firebase Firestore) ===== -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-        import {
-            initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-            collection, doc, onSnapshot, setDoc, updateDoc, addDoc
-        } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-        // ▼▼▼ Firebase コンソールで取得した設定値に置き換えてください ▼▼▼
-        const firebaseConfig = {
-            apiKey: "AIzaSyACmpOTYMFEgeKPzcfion53fol2B_d9z1I",
-            authDomain: "table-transfer-kds.firebaseapp.com",
-            projectId: "table-transfer-kds",
-            storageBucket: "table-transfer-kds.firebasestorage.app",
-            messagingSenderId: "855779883186",
-            appId: "1:855779883186:web:4e3e4b5b8cb6079c66f1ab"
-        };
-        // ▲▲▲ ここまで ▲▲▲
-
-        const configured = !String(firebaseConfig.apiKey).startsWith('YOUR_');
-
-        if (!configured) {
-            // 未設定時はこの端末内だけで動作 (従来どおり)
-            window.SyncApi = {
-                addOrder(order) {
-                    const o = { ...order, id: 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7) };
-                    applyRemoteOrders([o, ...orders]);
-                },
-                updateOrder(id, patch) {
-                    applyRemoteOrders(orders.map(o => o.id === id ? { ...o, ...patch } : o));
-                },
-                saveTables(tables) {
-                    applyRemoteTables(tables.map(t => ({ ...t })));
-                }
-            };
-            setSyncStatus('local');
-            showToast("Firebase未設定", "index.html の firebaseConfig を設定すると全端末で同期されます");
-        } else {
-            const app = initializeApp(firebaseConfig);
-            // オフラインキャッシュ有効 (一時的に電波が切れても操作でき、復帰時に自動送信)
-            const db = initializeFirestore(app, {
-                localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-            });
-
-            const ordersCol = collection(db, 'kds_orders');
-            const tablesDoc = doc(db, 'kds_settings', 'tables');
-
-            const onError = (label) => (e) => {
-                console.error(label, e);
-                setSyncStatus('error');
-                showToast("同期エラー", e.code === 'permission-denied'
-                    ? "Firestore のセキュリティルールを確認してください"
-                    : (e.message || String(e)));
-            };
-
-            window.SyncApi = {
-                addOrder(order) {
-                    addDoc(ordersCol, order).catch(onError('addOrder'));
-                },
-                updateOrder(id, patch) {
-                    updateDoc(doc(db, 'kds_orders', id), patch).catch(onError('updateOrder'));
-                },
-                saveTables(tables) {
-                    setDoc(tablesDoc, { tables: tables.map(t => ({ name: t.name, colorId: t.colorId })) })
-                        .catch(onError('saveTables'));
-                }
-            };
-
-            // --- 卓設定の購読 (接続状態の判定にも使用) ---
-            onSnapshot(tablesDoc, { includeMetadataChanges: true }, (snap) => {
-                setSyncStatus(snap.metadata.fromCache ? (navigator.onLine ? 'connecting' : 'offline') : 'online');
-                if (snap.exists()) {
-                    applyRemoteTables((snap.data().tables || []).map(t => ({ ...t })));
-                } else if (!snap.metadata.fromCache) {
-                    // 初回のみ: サーバーに卓設定が無ければ初期値を作成
-                    window.SyncApi.saveTables(DEFAULT_TABLES);
-                }
-            }, onError('tables'));
-
-            // --- 移動オーダーの購読 ---
-            let firstOrdersSnap = true;
-            onSnapshot(ordersCol, (snap) => {
-                if (!firstOrdersSnap) {
-                    snap.docChanges().forEach(ch => {
-                        if (ch.type !== 'added' || ch.doc.metadata.hasPendingWrites) return; // 自分の送信は除外
-                        const o = ch.doc.data();
-                        // 起動直後の取りこぼし分などで大量に鳴らないよう、直近1分以内のものだけ通知
-                        if (o.status === 'ACTIVE' && Date.now() - (o.createdAt || 0) < 60 * 1000) {
-                            notifyRemoteOrder(o);
-                        }
-                    });
-                }
-                firstOrdersSnap = false;
-                applyRemoteOrders(snap.docs.map(d => ({ ...d.data(), id: d.id })));
-            }, onError('orders'));
-
-            window.addEventListener('offline', () => setSyncStatus('offline'));
-            window.addEventListener('online', () => setSyncStatus('connecting'));
-        }
-    </script>
+    <script src="icons.js?v=2"></script>
+    <script src="app.js?v=2"></script>
 </body>
 </html>
