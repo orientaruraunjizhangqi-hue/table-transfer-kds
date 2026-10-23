@@ -11,8 +11,19 @@
 var FIREBASE_DB_URL = 'https://table-transfer-kds-default-rtdb.asia-southeast1.firebasedatabase.app';
 // ▲▲▲ ここまで ▲▲▲
 
-// データベース内の保存場所
-var DB_ROOT = '/kds';
+// ▼▼▼ 店舗一覧 (店舗を追加するときはここに1行追加) ▼▼▼
+//   id   : URL に使う英数字 (例: ?store=kyoto)。半角英小文字・数字・- _ のみ。一度決めたら変更しないでください
+//   name : 画面に表示する店舗名
+var STORES = [
+    { id: 'kyoto', name: '京都' },
+    { id: 'kobe', name: '神戸' },
+    { id: 'tenma', name: '天満' }
+];
+// ▲▲▲ ここまで ▲▲▲
+
+// データベース内の保存場所 (店舗ごとに /kds/stores/{店舗ID} に分かれます)
+var DB_ROOT = '';
+var currentStore = null;
 
 // Preset Palette Colors for Table Distinction
 var COLOR_PRESETS = [
@@ -103,8 +114,86 @@ window.onload = function () {
     initAudioUnlock();
     renderAllViews();
     setInterval(updateTimersUI, 1000);
-    Sync.start();
+
+    var store = resolveStore();
+    if (store) {
+        enterStore(store);
+    } else {
+        openStorePicker();
+    }
 };
+
+// ===================== 店舗の選択 =====================
+var STORE_KEY = 'kds_store';
+
+function storageGet(k) { try { return window.localStorage.getItem(k); } catch (e) { return null; } }
+function storageSet(k, v) { try { window.localStorage.setItem(k, v); } catch (e) {} }
+function storageRemove(k) { try { window.localStorage.removeItem(k); } catch (e) {} }
+
+function getQueryParam(name) {
+    var q = window.location.search.replace(/^\?/, '').split('&');
+    for (var i = 0; i < q.length; i++) {
+        var kv = q[i].split('=');
+        if (decodeURIComponent(kv[0]) === name) return decodeURIComponent((kv[1] || '').replace(/\+/g, ' '));
+    }
+    return null;
+}
+
+function findStore(id) {
+    if (!id) return null;
+    id = String(id).toLowerCase();
+    return findBy(STORES, function (s) { return s.id === id; });
+}
+
+// URL の ?store= → 端末に記憶した店舗 の順に決定
+function resolveStore() {
+    var fromUrl = findStore(getQueryParam('store'));
+    if (fromUrl) return fromUrl;
+    return findStore(storageGet(STORE_KEY));
+}
+
+function enterStore(store) {
+    currentStore = store;
+    DB_ROOT = '/kds/stores/' + store.id;
+    storageSet(STORE_KEY, store.id);
+    document.getElementById('storeName').textContent = store.name;
+    document.title = '卓移動 KDS - ' + store.name;
+    document.getElementById('storePickerModal').classList.add('hidden');
+    Sync.start();
+}
+
+function openStorePicker() {
+    var list = document.getElementById('storePickerList');
+    list.innerHTML = '';
+    STORES.forEach(function (s) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'w-full px-4 py-4 mb-2 rounded-xl border-2 font-black text-base ' +
+            (currentStore && currentStore.id === s.id
+                ? 'bg-amber-500 text-slate-950 border-amber-400'
+                : 'bg-slate-950 text-slate-100 border-slate-700');
+        btn.textContent = s.name;
+        btn.onclick = function () { chooseStore(s); };
+        list.appendChild(btn);
+    });
+    document.getElementById('storePickerClose').style.display = currentStore ? '' : 'none';
+    document.getElementById('storePickerModal').classList.remove('hidden');
+}
+
+function closeStorePicker() {
+    if (currentStore) document.getElementById('storePickerModal').classList.add('hidden');
+}
+
+function chooseStore(store) {
+    if (currentStore && currentStore.id === store.id) { closeStorePicker(); return; }
+    storageSet(STORE_KEY, store.id);
+    if (!currentStore) {
+        enterStore(store);
+    } else {
+        // 店舗切替は確実にするため ?store= 付きで再読み込み
+        window.location.href = window.location.pathname + '?store=' + encodeURIComponent(store.id);
+    }
+}
 
 // flex の gap に非対応なブラウザ (古い Safari) には html に no-flexgap を付ける
 function detectFlexGap() {
@@ -886,8 +975,8 @@ function notifyRemoteOrder(order) {
 
 // =====================================================================
 //  Firebase Realtime Database 同期 (REST API + EventSource)
-//  データ構造:  /kds/orders/{id} = 移動オーダー
-//               /kds/tables      = [{ name, colorId }, ...]
+//  データ構造:  /kds/stores/{店舗ID}/orders/{id} = 移動オーダー
+//               /kds/stores/{店舗ID}/tables      = [{ name, colorId }, ...]
 // =====================================================================
 var Sync = (function () {
     var tree = {};              // /kds 以下のデータの手元コピー

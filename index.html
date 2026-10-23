@@ -12,7 +12,7 @@
         - icons.js   : Lucide アイコンを内蔵したもの
         - app.js     : アプリ本体 + Firebase Realtime Database 同期 (ES5 で記述)
     -->
-    <link rel="stylesheet" href="styles.css?v=2">
+    <link rel="stylesheet" href="styles.css?v=4">
     <style>
         .touch-none { touch-action: none; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -79,7 +79,9 @@
             <div>
                 <div class="flex items-center space-x-2">
                     <h1 class="font-black text-slate-100 text-base sm:text-lg tracking-wide">卓移動 KDS</h1>
-                    <span class="text-[10px] bg-slate-800 text-amber-400 font-bold px-2 py-0.5 rounded border border-slate-700">商品: 移動</span>
+                    <button type="button" onclick="openStorePicker()" class="text-xs bg-amber-500 text-slate-950 font-black px-2 py-0.5 rounded" title="店舗を切り替え">
+                        <span id="storeName">店舗未選択</span> ▾
+                    </button>
                 </div>
                 <div class="flex items-center space-x-2 text-xs">
                     <span id="syncStatus" class="flex items-center text-slate-400 font-medium" title="端末間同期の状態">
@@ -346,6 +348,23 @@
         </div>
     </div>
 
+    <!-- Store Picker Modal (店舗の選択) -->
+    <div id="storePickerModal" class="fixed inset-0 bg-slate-950 flex items-center justify-center p-4 hidden" style="z-index: 60;">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
+                <div class="flex items-center space-x-2">
+                    <i data-lucide="arrow-right-left" class="w-5 h-5 text-amber-400"></i>
+                    <h2 class="font-bold text-slate-100 text-base">店舗を選択してください</h2>
+                </div>
+                <button id="storePickerClose" onclick="closeStorePicker()" class="text-slate-400 hover:text-white p-1 rounded-lg">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="storePickerList"></div>
+            <p class="text-[11px] text-slate-500 mt-2">選んだ店舗はこの端末に記憶されます。同じ店舗の端末どうしで伝票が共有されます。</p>
+        </div>
+    </div>
+
     <!-- Toast Notification -->
     <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 border border-slate-700 text-slate-100 px-4 py-3 rounded-2xl shadow-2xl flex items-center space-x-3 text-xs transform translate-y-20 opacity-0 transition-all duration-300 z-50 pointer-events-none">
         <div class="p-1.5 bg-amber-500/20 text-amber-400 rounded-xl">
@@ -367,7 +386,7 @@
             }
         };
     </script>
-    <script src="icons.js?v=2"></script>
-    <script src="app.js?v=2"></script>
+    <script src="icons.js?v=4"></script>
+    <script src="app.js?v=4"></script>
 </body>
 </html>

@@ -18,6 +18,29 @@
 | `database.rules.json` | Realtime Database のルール（Firebase コンソールに貼り付けて使用） | |
 | `build/` | `styles.css` / `icons.js` を作り直すための道具 | |
 
+## 店舗ごとの使い分け
+- 店舗ごとにデータ（伝票・卓設定）が分かれます。同じ店舗の端末どうしだけで共有されます
+- 各店舗の URL: `https://orientaruraunjizhangqi-hue.github.io/table-transfer-kds/?store=店舗ID`
+  | 店舗 | URL |
+  |---|---|
+  | 京都 | https://orientaruraunjizhangqi-hue.github.io/table-transfer-kds/?store=kyoto |
+  | 神戸 | https://orientaruraunjizhangqi-hue.github.io/table-transfer-kds/?store=kobe |
+  | 天満 | https://orientaruraunjizhangqi-hue.github.io/table-transfer-kds/?store=tenma |
+- `?store=` なしで開くと店舗選択画面が出ます（選んだ店舗は端末に記憶）
+- ヘッダーの店舗名ボタンから切り替え可能
+
+### 店舗を追加するには
+`app.js` 上部の `STORES` に1行追加して保存するだけです。
+```js
+var STORES = [
+    { id: 'kyoto', name: '京都' },
+    { id: 'kobe', name: '神戸' },
+    { id: 'tenma', name: '天満' },
+    { id: 'osaka', name: '大阪' }   // ← 追加
+];
+```
+`id` は半角英小文字・数字・`-` `_` のみ。一度使い始めたら変更しないでください（データの保存場所になるため）。
+
 ## 修正のしかた
 GitHub 上でファイルを開き、鉛筆アイコン（Edit）で編集 →「Commit changes」。1〜2分で自動反映されます。
 iPad 側で古い表示が残る場合は、`index.html` 内の `?v=2` の数字を増やすと確実に更新されます。
@@ -32,8 +55,8 @@ iPad 側で古い表示が残る場合は、`index.html` 内の `?v=2` の数字
 ## Realtime Database のデータ
 | パス | 内容 |
 |---|---|
-| `/kds/orders/{ID}` | 移動オーダー（gender, fromTable, toTable, status, createdAt, completedAt, noteType, textNote, canvasData, no） |
-| `/kds/tables` | `[{ name, colorId }]` 卓設定・色分け |
+| `/kds/stores/{店舗ID}/orders/{ID}` | 移動オーダー（gender, fromTable, toTable, status, createdAt, completedAt, noteType, textNote, canvasData, no） |
+| `/kds/stores/{店舗ID}/tables` | `[{ name, colorId }]` 卓設定・色分け |
 
 Firebase コンソール → Realtime Database →「データ」タブで中身を確認・削除できます。
 
